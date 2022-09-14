@@ -1,13 +1,12 @@
 ---
 title: "LIBRA_Large Nodules"
-author: "Dr. Benjamin Hunter (b.hunter@ic.ac.uk)"
+author: "Dr. Benjamin Hunter (b.hunter@ic.ac.uk) with assistance from Kristofer Linton-Reid"
 date: "14/09/2022"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-library(RNifti)
 library(dplyr)
 library(data.table)
 library(operators)
@@ -18,13 +17,9 @@ library(RegParallel)
 library(ggplot2)
 library(readxl)
 library(caTools)
-# library(bigReg)
 library(glmnet)
 library(intrval)
 library(caret)
-# library(gtsummary)
-library(e1071)
-library(xgboost)
 ```
 
 
@@ -43,7 +38,7 @@ x.ext = read.csv(file.path(input_path, 'External_Test_set.csv'))
 
 2) Z-standardisation
 ```{r}
-train_mean <- colMeans(x.train[6:87]) ## calulate the mean of the radiomics features, note not the clincial features
+train_mean <- colMeans(x.train[6:87]) ## calulate the mean of the radiomics features
 train_std <- sapply(x.train[6:87], sd, na.rm = TRUE) ## Standard deviataion
 
 scaled_train = scale(x.train[6:87], center=train_mean, scale= train_std) 
@@ -60,9 +55,7 @@ scaled_ext = as.data.frame(scaled_ext)
 tmp <- cor(scaled_train)
 tmp[upper.tri(tmp)] <- 0
 diag(tmp) <- 0
-# # Above two commands can be replaced with
-#  tmp[!lower.tri(tmp)] <- 0
-# #
+
 scaled_train <- scaled_train[,!apply(tmp,2,function(x) any(x > 0.95))]
 scaled_test <- scaled_test[,!apply(tmp,2,function(x) any(x > 0.95))]
 scaled_ext <- scaled_ext[,!apply(tmp,2,function(x) any(x > 0.95))]
@@ -71,8 +64,6 @@ head(scaled_train)
 ncol(scaled_train)
 ```
 
-
-
 4) Add the outcome variables back into the scaled data.
 ```{r}
 scaled_train$Outcome = x.train$Outcome
@@ -80,7 +71,7 @@ scaled_test$Outcome = x.test$Outcome
 scaled_ext$Outcome = x.ext$Outcome
 ```
 
-5) Univariable logistic regression with FDR correctionto select significant features. 
+5) Univariable logistic regression with FDR correction to select significant features. 
 ```{r}
 library(RegParallel)
 res <- RegParallel(
@@ -93,13 +84,6 @@ res <- RegParallel(
         family = binomial(link = 'logit')),
   FUNtype = 'glm',
   variables = colnames(scaled_train)[1:57])
-
-# res = tbl_uvregression(
-#   data = scaled_train,
-#   method = glm,
-#   y = Outcome
-# )
-
         
 res_sig = res[,c(1,6)]
 res_sig$p_adjusted = p.adjust(res_sig$P, method = "BH", n = length(res_sig$P))
@@ -110,6 +94,7 @@ uni_LR_variables <- final$Variable
 length(uni_LR_variables)
 uni_LR_variables
 ```
+
 6) Subset the training and test sets to include only the significant subset of variables.
 ```{r}
 scaled_train <- scaled_train[,uni_LR_variables]
@@ -121,17 +106,15 @@ scaled_test$Outcome = x.test$Outcome
 scaled_ext$Outcome = x.ext$Outcome
 ```
 
-
 7) Fit LASSO model
 ```{r}
 x = as.matrix(scaled_train[1:35])
 y = as.matrix(scaled_train$Outcome)
 
-par(pty="s")
 fit <- glmnet(x, y, family="binomial",alpha=1, standardize=TRUE)
 plot(fit, label=)
 cv <- cv.glmnet(x, y, family="binomial",alpha=1,  standardize=TRUE)
-fit <- glmnet(x, y, family="binomial",alpha=1,lambda=cv$lambda.1se,  standardize=TRUE) ## can change to lambda.1se but min is best
+fit <- glmnet(x, y, family="binomial",alpha=1,lambda=cv$lambda.1se,  standardize=TRUE) 
 plot(cv)
 
 pred <- predict(fit, x)
@@ -143,6 +126,7 @@ LASSO.vars <-variables[variables %ni% '(Intercept)']
 print(length(LASSO.vars))
 LASSO.vars ## print the variables here...
 ```
+
 8) Reduce datasets to LASSO features
 ```{r}
 x.train <- NULL
@@ -254,4 +238,3 @@ y = x.ext$Outcome
 cm = confusionMatrix(factor(y_pred), factor(y), positive = '1' )
 cm
 ```
-.
