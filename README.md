@@ -6,6 +6,9 @@ If you use the code in this repository or the corresponding data, please cite th
 
 "A Radiomics-Based Decision Support Tool Improves Lung Cancer Diagnosis In Combination With The Herder Score in Large Lung Nodules. B Hunter et al; EBioMed (2022): DOI."
 
+Access to the original CT images and segmentation masks may be provided following discussion with the corresponding author, Dr Richard Lee (richard.lee@rmh.nhs.uk).
+
+
 
 
 
