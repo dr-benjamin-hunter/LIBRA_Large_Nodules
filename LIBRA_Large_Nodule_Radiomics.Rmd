@@ -1,0 +1,257 @@
+---
+title: "LUCADI_Large Nodules"
+author: "Benjamin Hunter"
+date: "09/03/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(RNifti)
+library(dplyr)
+library(data.table)
+library(operators)
+library(filesstrings)
+library(purrr)
+library(survival)
+library(RegParallel)
+library(ggplot2)
+library(readxl)
+library(caTools)
+# library(bigReg)
+library(glmnet)
+library(intrval)
+library(caret)
+# library(gtsummary)
+library(e1071)
+library(xgboost)
+```
+
+
+1) Get the features and outcomes.
+```{r}
+set.seed(1234) #Set for reproducibility
+
+input_path = "D:/LIBRA/Large_Arm/Master_Data/Public_Github/" #Path to the folder containing the data csv files
+
+x.train = read.csv(file.path(input_path, 'Training_set.csv'))
+x.test = read.csv(file.path(input_path, 'Test_set.csv'))
+x.ext = read.csv(file.path(input_path, 'External_Test_set.csv'))
+```
+
+
+
+2) Z-standardisation
+```{r}
+train_mean <- colMeans(x.train[6:87]) ## calulate the mean of the radiomics features, note not the clincial features
+train_std <- sapply(x.train[6:87], sd, na.rm = TRUE) ## Standard deviataion
+
+scaled_train = scale(x.train[6:87], center=train_mean, scale= train_std) 
+scaled_test  = scale(x.test[6:87], center= train_mean, scale= train_std)
+scaled_ext = scale(x.ext[4:85], center= train_mean, scale= train_std)
+
+scaled_train = as.data.frame(scaled_train)
+scaled_test = as.data.frame(scaled_test)
+scaled_ext = as.data.frame(scaled_ext)
+```
+
+3)Remove highly correlated features.
+```{r}
+tmp <- cor(scaled_train)
+tmp[upper.tri(tmp)] <- 0
+diag(tmp) <- 0
+# # Above two commands can be replaced with
+#  tmp[!lower.tri(tmp)] <- 0
+# #
+scaled_train <- scaled_train[,!apply(tmp,2,function(x) any(x > 0.95))]
+scaled_test <- scaled_test[,!apply(tmp,2,function(x) any(x > 0.95))]
+scaled_ext <- scaled_ext[,!apply(tmp,2,function(x) any(x > 0.95))]
+
+head(scaled_train)
+ncol(scaled_train)
+```
+
+
+
+4) Add the outcome variables back into the scaled data.
+```{r}
+scaled_train$Outcome = x.train$Outcome
+scaled_test$Outcome = x.test$Outcome
+scaled_ext$Outcome = x.ext$Outcome
+```
+
+5) Univariable logistic regression with FDR correctionto select significant features. 
+```{r}
+library(RegParallel)
+res <- RegParallel(
+  data = scaled_train,
+  formula = 'Outcome ~ [*]',
+  blocksize = 50,
+  FUN = function(formula, data)
+    glm(formula = formula,
+        data= data,
+        family = binomial(link = 'logit')),
+  FUNtype = 'glm',
+  variables = colnames(scaled_train)[1:57])
+
+# res = tbl_uvregression(
+#   data = scaled_train,
+#   method = glm,
+#   y = Outcome
+# )
+
+        
+res_sig = res[,c(1,6)]
+res_sig$p_adjusted = p.adjust(res_sig$P, method = "BH", n = length(res_sig$P))
+
+final = subset(res_sig, p_adjusted < 0.05)
+uni_LR_variables <- final$Variable
+
+length(uni_LR_variables)
+uni_LR_variables
+```
+6) Subset the training and test sets to include only the significant subset of variables.
+```{r}
+scaled_train <- scaled_train[,uni_LR_variables]
+scaled_test <- scaled_test[,uni_LR_variables]
+scaled_ext <- scaled_ext[,uni_LR_variables]
+
+scaled_train$Outcome = x.train$Outcome
+scaled_test$Outcome = x.test$Outcome
+scaled_ext$Outcome = x.ext$Outcome
+```
+
+
+7) Fit LASSO model
+```{r}
+x = as.matrix(scaled_train[1:35])
+y = as.matrix(scaled_train$Outcome)
+
+par(pty="s")
+fit <- glmnet(x, y, family="binomial",alpha=1, standardize=TRUE)
+plot(fit, label=)
+cv <- cv.glmnet(x, y, family="binomial",alpha=1,  standardize=TRUE)
+fit <- glmnet(x, y, family="binomial",alpha=1,lambda=cv$lambda.1se,  standardize=TRUE) ## can change to lambda.1se but min is best
+plot(cv)
+
+pred <- predict(fit, x)
+
+c<-coef(fit,s='lambda.1se') ### again can change this to  lambda.1se
+inds<-which(c!=0)
+variables<-row.names(c)[inds]
+LASSO.vars <-variables[variables %ni% '(Intercept)']
+print(length(LASSO.vars))
+LASSO.vars ## print the variables here...
+```
+8) Reduce datasets to LASSO features
+```{r}
+x.train <- NULL
+x.train <- scaled_train[,LASSO.vars]
+
+x.test <- NULL
+x.test <- scaled_test[,LASSO.vars]
+
+x.ext <- NULL
+x.ext <- scaled_ext[,LASSO.vars]
+```
+
+9) Create a data frame of the LASSO weights, multiply the features by the weights and add them to generate the LN-RPV
+```{r}
+c = as.data.frame(as.matrix(c))
+c = subset(c, s1 != 0)
+c = t(c)
+c = as.data.frame(c)
+c = c[-1]
+c
+```
+
+```{r}
+c = as.vector(c) 
+
+for (i in 1:ncol(x.train)) {
+  for (r in 1:nrow(x.train)) {
+    x.train[r,i] = x.train[r,i]*c[1,i]
+  }
+}
+
+x.train$RPV <- rowSums(x.train)
+x.train$Outcome <- scaled_train$Outcome
+
+```
+
+```{r}
+for (i in 1:ncol(x.test)) {
+  for (r in 1:nrow(x.test)) {
+    x.test[r,i] = x.test[r,i]*c[1,i]
+  }
+}
+
+x.test$RPV <- rowSums(x.test)
+x.test$Outcome <- scaled_test$Outcome
+
+```
+
+```{r}
+for (i in 1:ncol(x.ext)) {
+  for (r in 1:nrow(x.ext)) {
+    x.ext[r,i] = x.ext[r,i]*c[1,i]
+  }
+}
+
+x.ext$RPV <- rowSums(x.ext)
+x.ext$Outcome <- scaled_ext$Outcome
+```
+
+10) Generate ROC curves and optimal cutoff with bootstrapping
+```{r}
+library(cutpointr)
+train_roc = roc(x.train, RPV, Outcome, pos_class = 1, neg_class = 0, direction = ">=")
+plot(train_roc)
+
+train_cutoff = cutpointr(x.train, RPV, Outcome, pos_class = 1, neg_class = 0, direction = ">=", method = maximize_metric, metric = youden, boot_runs = 1000)
+train_cutoff
+
+boot_ci(train_cutoff, AUC, in_bag = TRUE, alpha = 0.05)
+```
+
+
+```{r}
+test_roc = roc(x.test, RPV, Outcome, pos_class = 1, neg_class = 0, direction = ">=")
+plot(test_roc)
+
+test_cutoff = cutpointr(x.test, RPV, Outcome, pos_class = 1, neg_class = 0, direction = ">=", method = maximize_metric, metric = youden, boot_runs = 1000)
+test_cutoff
+
+boot_ci(test_cutoff, AUC, in_bag = TRUE, alpha = 0.05)
+```
+
+```{r}
+ext_roc = roc(x.ext, RPV, Outcome, pos_class = 1, neg_class = 0, direction = ">=")
+plot(ext_roc)
+
+ext_cutoff = cutpointr(x.ext, RPV, Outcome, pos_class = 1, neg_class = 0, direction = ">=", method = maximize_metric, metric = accuracy, na.rm = TRUE, boot_runs = 1000)
+ext_cutoff
+
+boot_ci(ext_cutoff, AUC, in_bag = TRUE, alpha = 0.05)
+```
+
+11) Use the training set cutoff to calculate prediction metrics in the test sets.
+
+Test set:
+```{r}
+y_pred = ifelse(x.test$RPV >= -0.1991184, 1, 0)
+y = x.test$Outcome
+
+cm = confusionMatrix(factor(y_pred), factor(y), positive = '1' )
+cm
+```
+
+External test set:
+```{r}
+y_pred = ifelse(x.ext$RPV >= -0.1991184, 1, 0)
+y = x.ext$Outcome
+
+cm = confusionMatrix(factor(y_pred), factor(y), positive = '1' )
+cm
+```
+.
