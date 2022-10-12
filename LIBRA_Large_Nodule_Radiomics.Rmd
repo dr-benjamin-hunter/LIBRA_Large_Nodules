@@ -38,12 +38,12 @@ x.ext = read.csv(file.path(input_path, 'External_Test_set.csv'))
 
 2) Z-standardisation
 ```{r}
-train_mean <- colMeans(x.train[6:87]) ## calulate the mean of the radiomics features
-train_std <- sapply(x.train[6:87], sd, na.rm = TRUE) ## Standard deviataion
+train_mean <- colMeans(x.train[2:83]) ## calulate the mean of the radiomics features
+train_std <- sapply(x.train[2:83], sd, na.rm = TRUE) ## Standard deviataion
 
-scaled_train = scale(x.train[6:87], center=train_mean, scale= train_std) 
-scaled_test  = scale(x.test[6:87], center= train_mean, scale= train_std)
-scaled_ext = scale(x.ext[4:85], center= train_mean, scale= train_std)
+scaled_train = scale(x.train[2:83], center=train_mean, scale= train_std) 
+scaled_test  = scale(x.test[2:83], center= train_mean, scale= train_std)
+scaled_ext = scale(x.ext[2:83], center= train_mean, scale= train_std)
 
 scaled_train = as.data.frame(scaled_train)
 scaled_test = as.data.frame(scaled_test)
